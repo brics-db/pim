@@ -1,0 +1,3 @@
+[submodule "pim-simulators"]
+	path = pim-simulators
+	url = https://github.com/brics-db/pim-simulators.git
