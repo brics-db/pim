@@ -5,6 +5,7 @@
 #include <array>
 #include <exception>
 #include <random>
+#include <limits>
 
 typedef uint16_t A_t;
 typedef uint64_t resint_t;
@@ -26,26 +27,50 @@ int main(int argc, char *argv[]) {
 	uint64_t Ainv = AInvs[idx];
 
 	std::default_random_engine generator;
-	std::uniform_int_distribution<int> distribution;
+	std::uniform_int_distribution<uint32_t> distribution;
 
-	const size_t SIZE = 1024 * 1024 * 64;
-	uint64_t * bufferIn = new uint64_t[SIZE]; // 2^20 elements à 8 bytes
-	uint64_t * bufferEnc = new uint64_t[SIZE];
-	uint64_t * bufferOut = new uint64_t[SIZE];
-	for(size_t i = 0; i < SIZE; ++i)
+	const size_t SIZE = 1024 * 1024;
+	uint64_t * bufferIn = new uint64_t[SIZE]{};
+	uint64_t * bufferEnc = new uint64_t[SIZE]{};
+	uint64_t * bufferOut = new uint64_t[SIZE]{};
+	const size_t BITSPERUNIT = sizeof(uint64_t) * 8;
+	uint64_t * bitmap = new uint64_t[SIZE / BITSPERUNIT]{};
+	for(size_t i = 0; i < SIZE; ++i) {
 		bufferIn[i] = distribution(generator); // slow, but random ;-) -- yes we can use an xor-shuffle-generator instead...
+	}
+	for(size_t i = 0; i < (SIZE / BITSPERUNIT); ++i) {
+		bitmap[i] = 0;
+	}
 
 	std::cout << "start." << std::endl;
 	zsim_roi_begin();
+	zsim_PIM_function_begin();
+	zsim_work_begin();
+	COMPILER_BARRIER()
 	for (size_t i = 0; i < SIZE; ++i)
 		bufferEnc[i] = bufferIn[i] * A;
-	for(size_t i = 0; i < SIZE; ++i)
+	COMPILER_BARRIER()
+	for(size_t i = 0; i < SIZE; ++i) {
 		bufferOut[i] = bufferEnc[i] * Ainv;
+		COMPILER_BARRIER()
+		if (bufferOut[i] > std::numeric_limits<uint32_t>::max()) {
+			bitmap[i / BITSPERUNIT] |= 0x1 << (i % BITSPERUNIT);
+		}
+	}
+	zsim_work_end();
+	zsim_PIM_function_end();
 	zsim_roi_end();
 
-	for(size_t i = 0; i < SIZE; ++i)
-		if (bufferIn[i] != bufferOut[i])
+	for(size_t i = 0; i < SIZE; ++i) {
+		if (bufferIn[i] != bufferOut[i]) {
 			std::cout << i << ": " << bufferIn[i] << " != " << bufferOut[i] << '\n';
+		}
+	}
+	for (size_t i = 0; i < (SIZE / BITSPERUNIT); ++i) {
+		if (bitmap[i]) {
+			std::cout << "error found at " << (i * BITSPERUNIT) << ": " << bitmap[i] << '\n';
+		}
+	}
 
 	std::cout << "end." << std::endl;
 }
