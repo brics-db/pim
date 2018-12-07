@@ -36,5 +36,5 @@ CMakeCache.txt
 CMakeFiles
 cmake_install.cmake
 
-#CMake - specific files
-/Makefile
+# standard build directory
+/build

@@ -61,3 +61,6 @@ EXECUTE_PROCESS(COMMAND scons -j "${NPROC}" WORKING_DIRECTORY "${CMAKE_SOURCE_DI
 EXECUTE_PROCESS(COMMAND make -j "${NPROC}" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/pim-simulators/pim/ramulator-pim")
 EXECUTE_PROCESS(COMMAND make -j "${NPROC}" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/pim-simulators/host/ramulator-host")
 EXECUTE_PROCESS(COMMAND scons -j "${NPROC}" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/pim-simulators/zsim-ramulator")
+
+ADD_EXECUTABLE(test1 "${CMAKE_SOURCE_DIR}/test/test1.cpp")
+TARGET_INCLUDE_DIRECTORIES(test1 BEFORE PUBLIC "${CMAKE_SOURCE_DIR}/pim-simulators/zsim-ramulator/misc/hooks")
