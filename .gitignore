@@ -31,6 +31,9 @@
 *.out
 *.app
 
+# Vim files
+*.swp
+
 # CMake - Generell
 CMakeCache.txt
 CMakeFiles
