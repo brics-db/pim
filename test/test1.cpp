@@ -29,7 +29,7 @@ int main(int argc, char *argv[]) {
 	std::default_random_engine generator;
 	std::uniform_int_distribution<uint32_t> distribution;
 
-	const size_t SIZE = 1024 * 1024;
+	const size_t SIZE = 1024 * 1024 * 16;
 	uint64_t * bufferIn = new uint64_t[SIZE]{};
 	uint64_t * bufferEnc = new uint64_t[SIZE]{};
 	uint64_t * bufferOut = new uint64_t[SIZE]{};
