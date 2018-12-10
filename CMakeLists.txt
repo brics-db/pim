@@ -30,24 +30,24 @@ set(CMAKE_COLOR_MAKEFILE ON)
 
 SET(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR})
 SET(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR})
-SET(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/CMake")
 
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -g3 -march=native -Wall -Wextra -pedantic -Weffc++ -fexceptions -fnon-call-exceptions")
-SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3 -rdynamic")
-SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")
-# see
-# http://stackoverflow.com/questions/11437692/how-to-add-a-custom-build-type-to-cmake-targetting-make
-# for adding custom build types
-#SET(CMAKE_CXX_FLAGS_PROFILEGENERATE "${CMAKE_CXX_FLAGS_PROFILEGENERATE} -O0 -DDEBUG -rdynamic -g -pg -fprofile-generate")
-#SET(CMAKE_CXX_FLAGS_PROFILEUSE "${CMAKE_CXX_FLAGS_PROFILEUSE} -O3 -DNDEBUG -fprofile-use")
+SET(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/CMake")
+INCLUDE(cotire)
 
 ADD_SUBDIRECTORY(pim-simulators)
-SET(ZSIM_PATH "${CMAKE_SOURCE_DIR}/pim-simulators/zsim-ramulator/build/opt/zsim")
-IF(EXISTS "${ZSIM_PATH}")
-	FILE(COPY "${ZSIM_PATH}" DESTINATION "${CMAKE_BINARY_DIR}")
-ELSE()
-	MESSAGE(FATAL_ERROR "Required zsim executable (${ZSIM_PATH}) not found!")
-ENDIF()
 
 ADD_EXECUTABLE(test1 "${PROJECT_SOURCE_DIR}/test/test1.cpp")
 TARGET_INCLUDE_DIRECTORIES(test1 BEFORE PUBLIC "${PROJECT_SOURCE_DIR}/pim-simulators/zsim-ramulator/misc/hooks")
+TARGET_COMPILE_OPTIONS(test1 PUBLIC -O3 -g3 -Wall -Wextra -pedantic -Weffc++ -fexceptions -fnon-call-exceptions)
+SET_PROPERTY(TARGET ramulator_pim PROPERTY CXX_STANDARD 17) 
+SET_PROPERTY(TARGET ramulator_pim PROPERTY CXX_STANDARD_REQUIRED ON)
+
+SET(ZSIM_PATH "${CMAKE_SOURCE_DIR}/pim-simulators/zsim-ramulator/build/opt/")
+IF(EXISTS "${ZSIM_PATH}")
+	ADD_CUSTOM_TARGET(copy_zsim ALL)
+	ADD_CUSTOM_COMMAND(TARGET copy_zsim POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy "${ZSIM_PATH}/zsim" "${CMAKE_BINARY_DIR}" BYPRODUCTS "${CMAKE_BINARY_DIR}/zsim" VERBATIM)
+ELSE()
+	MESSAGE(FATAL_ERROR "Required zsim executable path (${ZSIM_PATH}) not found!")
+ENDIF()
+
+

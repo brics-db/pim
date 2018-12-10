@@ -44,8 +44,8 @@ int main(int argc, char *argv[]) {
 
 	std::cout << "start." << std::endl;
 	zsim_roi_begin();
+//	zsim_work_begin();
 	zsim_PIM_function_begin();
-	zsim_work_begin();
 	COMPILER_BARRIER()
 	for (size_t i = 0; i < SIZE; ++i)
 		bufferEnc[i] = bufferIn[i] * A;
@@ -57,7 +57,7 @@ int main(int argc, char *argv[]) {
 			bitmap[i / BITSPERUNIT] |= 0x1 << (i % BITSPERUNIT);
 		}
 	}
-	zsim_work_end();
+//	zsim_work_end();
 	zsim_PIM_function_end();
 	zsim_roi_end();
 
