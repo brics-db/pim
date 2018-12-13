@@ -81,15 +81,18 @@ size_t decodeCheckedSSE42(std::array<T, N1> & bufEnc, std::array<T, N2> & bufOut
 		__m128i mmDec = _mm_mullo_epi32(_mm_lddqu_si128(reinterpret_cast<__m128i*>(&bufEnc[i])), mmAinv);
 		_mm_storeu_si128(reinterpret_cast<__m128i*>(&bufOut[i]), mmDec);
 		__m128i mmMask = _mm_cmpgt_epi32(mmDec, mmMax);
-		int mask;
+		int mask = 0;
 		if constexpr (sizeof(uint_t) == 8) {
 			mask = _mm_movemask_pd(_mm_castsi128_pd(mmMask));
 		} else if constexpr (sizeof(uint_t) == 4) {
 			mask = _mm_movemask_ps(_mm_castsi128_ps(mmMask));
 		} else if constexpr (sizeof(uint_t) < 4) {
 			mask = _mm_movemask_epi8(mmMask);
+		} else {
+			std::cerr << "wrong state!" << std::endl;
 		}
 		if (mask) {
+			std::cerr << i << ':' << mask << std::endl;
 			for(size_t j = 0; i < sizeof(uint_t); ++i) {
 				if (mask & (0x1 << j)) {
 					bitmap[(i + j) / BITSPERUNIT] |= 0x1 << (i + j) % BITSPERUNIT;
@@ -109,6 +112,8 @@ size_t decodeCheckedSSE42(std::array<T, N1> & bufEnc, std::array<T, N2> & bufOut
 #endif
 
 int main(int argc, char *argv[]) {
+	const size_t SIZE = 1'000'000;
+
 	int idx = 1;
 	A_t A = As[idx];
 	if (argc > 1) {
@@ -119,12 +124,15 @@ int main(int argc, char *argv[]) {
 			throw std::runtime_error("The A-index is too large.");
 		A = As[idx];
 	}
-	uint64_t Ainv = AInvs[idx];
+	resuint_t Ainv = AInvs[idx];
+
+	std::cout << "sizeof(uint_t)=" << sizeof(uint_t) << ". sizeof(resuint_t)=" << sizeof(resuint_t) << std::endl;
+	std::cout << "Using A=" << A << " and A^-1=" << Ainv << ". A*A^-1=" << (resuint_t)(A * Ainv) << std::endl;
+	std::cout << "SIZE=" << SIZE << std::endl;
 
 	std::default_random_engine generator;
-	std::uniform_int_distribution<uint32_t> distribution;
+	std::uniform_int_distribution<uint_t> distribution;
 
-	const size_t SIZE = 1'000'000;
 	auto bufferIn = new std::array<buf_t, SIZE>{};
 	auto bufferEnc = new std::array<buf_t, SIZE>{};
 	auto bufferOut = new std::array<buf_t, SIZE>{};
@@ -134,15 +142,14 @@ int main(int argc, char *argv[]) {
 	for(size_t i = 0; i < SIZE; ++i) {
 		bufferIn[0][i] = distribution(generator); // slow, but random ;-) -- yes we can use an xor-shuffle-generator instead...
 	}
-	for(size_t i = 0; i < (SIZE / BITSPERUNIT); ++i) {
-		bitmap[0][i] = 0;
-	}
 #ifdef __SSE4_2__
 #define encode encodeSSE42
 #define decodeChecked decodeCheckedSSE42
+	std::cout << "SSE4.2" << std::endl;
 #else
 #define encode encodeScalar
 #define decodeChecked decodeCheckedScalar
+	std::cout << "Scalar" << std::endl;
 #endif
 	std::cout << "start." << std::endl;
 	zsim_roi_begin();
@@ -154,18 +161,19 @@ int main(int argc, char *argv[]) {
 	if (num != bufferEnc->size()) {
 		std::cerr << "[WARNING] After decodeChecked(): " << num << " != " << bufferEnc->size() << std::endl;
 	}
+	zsim_roi_end();
+	std::cout << "end.\nchecking." << std::endl;
+#undef encode
+#undef decodeChecked
+
 	for(size_t i = 0; i < SIZE; ++i) {
 		if (bufferIn[0][i] != bufferOut[0][i]) {
-			std::cout << i << ": " << bufferIn[0][i] << " != " << bufferOut[0][i] << '\n';
+			std::cerr << i << ": " << bufferIn[0][i] << " != " << bufferOut[0][i] << '\n';
 		}
 	}
 	for (size_t i = 0; i < (SIZE / BITSPERUNIT); ++i) {
 		if (bitmap[0][i]) {
-			std::cout << "error found at " << (i * BITSPERUNIT) << ": " << bitmap[0][i] << '\n';
+			std::cerr << "error found at " << (i * BITSPERUNIT) << ": " << bitmap[0][i] << '\n';
 		}
 	}
-	zsim_roi_end();
-	std::cout << "end." << std::endl;
-#undef encode
-#undef decodeChecked
 }
