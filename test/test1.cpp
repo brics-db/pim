@@ -7,6 +7,7 @@
 #include <random>
 #include <limits>
 #include <immintrin.h>
+#include <vector>
 
 typedef uint16_t A_t;
 #if false
@@ -23,29 +24,29 @@ const constexpr std::array<resuint_t, 16> AInvs = {0x00000001, 0xaaaaaaab, 0xb6d
         0x392f51d9, 0x1abdc995, 0xab2da9a7, 0xd142174d};
 #endif
 
-typedef resuint_t buf_t;
-
-template<typename T, size_t N1, size_t N2>
-size_t encodeScalar(std::array<T, N1> & bufIn, std::array<T, N2> & bufEnc, resuint_t A) {
+template<typename T1, size_t N1, typename T2, size_t N2, typename T3>
+size_t encodeScalar(std::array<T1, N1> & bufIn, std::array<T2, N2> & bufEnc, T3 A) {
 	zsim_PIM_function_begin();
 	size_t i = 0;
 	static_assert(N1 <= N2, "Second array must be of greater or equal size as the first array!");
 	for (; i < N1; ++i) {
-		bufEnc[i] = bufIn[i] * A;
+		bufEnc[i] = static_cast<T2>(bufIn[i]) * A;
 	}
 	zsim_PIM_function_end();
 	return i;
 }
 
-template<size_t BITSPERUNIT, typename T, size_t N1, size_t N2, size_t N3>
-size_t decodeCheckedScalar(std::array<T, N1> & bufEnc, std::array<T, N2> & bufOut, resuint_t Ainv, std::array<size_t, N3> & bitmap) {
+template<typename T1, size_t N1, typename T2, size_t N2, typename T3, typename B, size_t NB>
+size_t decodeCheckedScalar(std::array<T1, N1> & bufEnc, std::array<T2, N2> & bufDec, T3 Ainv, std::array<B, NB> & bitmap) {
+	const size_t BITSPERUNIT = sizeof(B) * 8;
 	zsim_PIM_function_begin();
 	size_t i = 0;
 	static_assert(N1 <= N2, "Second array must be of greater or equal size as the first array!");
-	static_assert((N1 / (sizeof(size_t) * 8)) <= N3, "Bitmap is too small!");
+	static_assert((N1 / BITSPERUNIT) <= NB, "Bitmap is too small!");
 	for(; i < N1; ++i) {
-		bufOut[i] = bufEnc[i] * Ainv;
-		if (bufOut[i] > std::numeric_limits<uint_t>::max()) {
+		T1 val = bufEnc[i] * Ainv;
+		bufDec[i] = static_cast<T2>(val);
+		if (val > std::numeric_limits<T2>::max()) {
 			bitmap[i / BITSPERUNIT] |= 0x1 << (i % BITSPERUNIT);
 		}
 	}
@@ -53,61 +54,168 @@ size_t decodeCheckedScalar(std::array<T, N1> & bufEnc, std::array<T, N2> & bufOu
 	return i;
 }
 
-#ifdef __SSE4_2__
-template<typename T, size_t N1, size_t N2>
-static inline size_t encodeSSE42(std::array<T, N1> & bufIn, std::array<T, N2> & bufEnc, resuint_t A) {
+template<typename T, size_t N1, size_t N2, typename T2, typename B, size_t N3>
+size_t filter1LTScalar(std::array<T, N1> & bufEnc, std::array<T, N2> & bufFilt, T2 Ainv, std::array<B, N3> & bitmap, T threshold) {
+	const size_t BITSPERUNIT = sizeof(B) * 8;
 	zsim_PIM_function_begin();
-	const size_t ELEMENTS_PER_VECTOR = sizeof(__m128i) / sizeof(T);
 	size_t i = 0;
+	size_t j = 0;
+	static_assert(N1 <= N2, "Second array must be of greater or equal size as the first array!");
+	static_assert((N1 / BITSPERUNIT) <= N3, "Bitmap is too small!");
+	for(; i < N1; ++i) {
+		T val = static_cast<T>(bufEnc[i] * Ainv);
+		if (val < threshold) {
+			bufFilt[j++] = val;
+		}
+		if (val > std::numeric_limits<T>::max()) {
+			bitmap[i / BITSPERUNIT] |= 0x1 << (i % BITSPERUNIT);
+		}
+	}
+	zsim_PIM_function_end();
+	return j;
+}
+
+#ifdef __SSE4_2__
+template<typename T1, typename T2>
+void __encodeSSE42(__m128i * mmIn, __m128i * mmEnc, __m128i mmA);
+
+template<>
+void __encodeSSE42<uint16_t, uint32_t>(__m128i * mmIn, __m128i * mmEnc, __m128i mmA) {
+	__m128i mmUnenc = _mm_lddqu_si128(mmIn);
+	__m128i mmMid1 = _mm_cvtepu16_epi32(mmUnenc);
+	__m128i mmEnc1 = _mm_mullo_epi32(mmMid1, mmA);
+	__m128i mmMid2 = _mm_srli_si128(mmUnenc, 8);
+	__m128i mmMid3 = _mm_cvtepu16_epi32(mmMid2);
+	__m128i mmEnc2 = _mm_mullo_epi32(mmMid3, mmA);
+	_mm_storeu_si128(mmEnc, mmEnc1);
+	_mm_storeu_si128(mmEnc + 1, mmEnc2);
+}
+
+template<typename T1, size_t N1, typename T2, size_t N2, typename T3>
+static inline size_t encodeSSE42(std::array<T1, N1> & bufIn, std::array<T2, N2> & bufEnc, T3 A) {
+	const size_t ELEMENTS_PER_VECIN = sizeof(__m128i) / sizeof(T1);
+	const size_t ELEMENTS_PER_VECENC = sizeof(__m128i) / sizeof(T2);
+	zsim_PIM_function_begin();
+	size_t i = 0;
+	size_t j = 0;
 	__m128i mmA = _mm_set1_epi32(A);
 	static_assert(N1 <= N2, "Second array must be of greater or equal size as the first array!");
-	for (; i < N1; i += ELEMENTS_PER_VECTOR) {
-		__m128i mmEnc = _mm_mullo_epi32(_mm_lddqu_si128(reinterpret_cast<__m128i*>(&bufIn[i])), mmA);
-		_mm_storeu_si128(reinterpret_cast<__m128i*>(&bufEnc[i]), mmEnc);
+	for (; i <= (N1 - ELEMENTS_PER_VECIN); i += ELEMENTS_PER_VECIN, j += 2 * ELEMENTS_PER_VECENC) {
+		/*
+		__m128i mmUnenc = _mm_lddqu_si128(reinterpret_cast<__m128i*>(&bufIn[i]));
+		__m128i mmEnc1 = _mm_mullo_epi32(_mm_cvtepi16_epi32(mmUnenc), mmA);
+		__m128i mmEnc2 = _mm_mullo_epi32(_mm_cvtepi16_epi32(_mm_srli_si128(mmUnenc, 8)), mmA);
+		_mm_storeu_si128(reinterpret_cast<__m128i*>(&bufEnc[j]), mmEnc1);
+		_mm_storeu_si128(reinterpret_cast<__m128i*>(&bufEnc[j + ELEMENTS_PER_VECENC]), mmEnc2);
+		*/
+		__encodeSSE42<T1, T2>(reinterpret_cast<__m128i*>(&bufIn[i]), reinterpret_cast<__m128i*>(&bufEnc[j]), mmA);
+	}
+	for (; i < N1; ++i) {
+		bufEnc[i] = static_cast<T2>(bufIn[i]) * A;
 	}
 	zsim_PIM_function_end();
 	return i;
 }
 
-template<size_t BITSPERUNIT, typename T, size_t N1, size_t N2, size_t N3>
-size_t decodeCheckedSSE42(std::array<T, N1> & bufEnc, std::array<T, N2> & bufOut, resuint_t Ainv, std::array<size_t, N3> & bitmap) {
+template<typename T>
+int movemask(__m128i & mmMask);
+template<>
+int movemask<uint64_t>(__m128i & mmMask) {
+	return _mm_movemask_pd(_mm_castsi128_pd(mmMask));
+}
+template<>
+int movemask<uint32_t>(__m128i & mmMask) {
+	return _mm_movemask_ps(_mm_castsi128_ps(mmMask));
+}
+template<>
+int movemask<uint8_t>(__m128i & mmMask) {
+	return _mm_movemask_epi8(mmMask);
+}
+
+template<typename T1, size_t N1, typename T2, size_t N2, typename T3, typename B, size_t NB>
+size_t decodeCheckedSSE42(std::array<T1, N1> & bufEnc, std::array<T2, N2> & bufDec, T3 Ainv, std::array<B, NB> & bitmap) {
+	const size_t BITSPERUNIT = sizeof(B) * 8;
+	const size_t ELEMENTS_PER_VECENC = sizeof(__m128i) / sizeof(T1);
+	const size_t RATIO = sizeof(T1) / sizeof(T2);
+	const size_t ELEMENTS_PER_VECDEC = (sizeof(__m128i) / sizeof(T2)) / RATIO;
 	zsim_PIM_function_begin();
+	__m128i mmShuffle = _mm_set_epi64x(0x8080808080808080ULL, 0x0D0C090805040100ULL);
 	size_t i = 0;
+	size_t j = 0;
 	static_assert(N1 <= N2, "Second array must be of greater or equal size as the first array!");
-	static_assert((N1 / (sizeof(size_t) * 8)) <= N3, "Bitmap is too small!");
+	static_assert((N1 / BITSPERUNIT) <= NB, "Bitmap is too small!");
 	__m128i mmAinv = _mm_set1_epi32(Ainv);
-	__m128i mmMax = _mm_set1_epi32(std::numeric_limits<uint_t>::max());
-	for(; i <= (N1 - sizeof(uint_t)); ++i) {
+	__m128i mmMax = _mm_set1_epi32(std::numeric_limits<T2>::max());
+	for(; i <= (N1 - ELEMENTS_PER_VECENC); i += ELEMENTS_PER_VECENC, j += ELEMENTS_PER_VECDEC) {
 		__m128i mmDec = _mm_mullo_epi32(_mm_lddqu_si128(reinterpret_cast<__m128i*>(&bufEnc[i])), mmAinv);
-		_mm_storeu_si128(reinterpret_cast<__m128i*>(&bufOut[i]), mmDec);
+		*reinterpret_cast<uint64_t*>(&bufDec[j]) =_mm_extract_epi64(_mm_shuffle_epi8(mmDec, mmShuffle), 0);
 		__m128i mmMask = _mm_cmpgt_epi32(mmDec, mmMax);
-		int mask = 0;
-		if constexpr (sizeof(uint_t) == 8) {
-			mask = _mm_movemask_pd(_mm_castsi128_pd(mmMask));
-		} else if constexpr (sizeof(uint_t) == 4) {
-			mask = _mm_movemask_ps(_mm_castsi128_ps(mmMask));
-		} else if constexpr (sizeof(uint_t) < 4) {
-			mask = _mm_movemask_epi8(mmMask);
-		} else {
-			std::cerr << "wrong state!" << std::endl;
-		}
+		int mask = movemask<T1>(mmMask);
 		if (mask) {
 			std::cerr << i << ':' << mask << std::endl;
-			for(size_t j = 0; i < sizeof(uint_t); ++i) {
-				if (mask & (0x1 << j)) {
-					bitmap[(i + j) / BITSPERUNIT] |= 0x1 << (i + j) % BITSPERUNIT;
+			for(size_t k = 0; k < sizeof(T1); ++k) {
+				if (mask & (0x1 << k)) {
+					bitmap[(i + k) / BITSPERUNIT] |= 0x1 << (i + k) % BITSPERUNIT;
 				}
 			}
 		}
 	}
 	for(; i < N1; ++i) {
-		bufOut[i] = bufEnc[i] * Ainv;
-		if (bufOut[i] > std::numeric_limits<uint_t>::max()) {
+		bufDec[i] = bufEnc[i] * Ainv;
+		if (bufDec[i] > std::numeric_limits<T2>::max()) {
 			bitmap[i / BITSPERUNIT] |= 0x1 << (i % BITSPERUNIT);
 		}
 	}
 	zsim_PIM_function_end();
 	return i;
+}
+
+template<typename T, size_t N1, size_t N2, typename T2, typename B, size_t N3>
+size_t filter1LTSSE42(std::array<T, N1> & bufEnc, std::array<T, N2> & bufFilt, T2 Ainv, std::array<B, N3> & bitmap, T threshold) {
+	const size_t BITSPERUNIT = sizeof(B) * 8;
+	const size_t ELEMENTS_PER_VECENC = sizeof(__m128i) / sizeof(T);
+	zsim_PIM_function_begin();
+	size_t i = 0;
+	size_t j = 0;
+	static_assert(N1 <= N2, "Second array must be of greater or equal size as the first array!");
+	static_assert((N1 / BITSPERUNIT) <= N3, "Bitmap is too small!");
+	__m128i mmAinv = _mm_set1_epi32(Ainv);
+	__m128i mmMax = _mm_set1_epi32(std::numeric_limits<uint_t>::max());
+	__m128i mmThreshold = _mm_set1_epi32(threshold);
+	for(; i <= (N1 - ELEMENTS_PER_VECENC); i += ELEMENTS_PER_VECENC) {
+		__m128i mmEnc = _mm_lddqu_si128(reinterpret_cast<__m128i*>(&bufEnc[i]));
+		__m128i mmDec = _mm_mullo_epi32(mmEnc, mmAinv);
+		__m128i mmMask = _mm_cmplt_epi32(mmEnc, mmThreshold);
+		int mask = movemask<T>(mmMask);
+		if (mask) {
+			for(size_t k = 0; k < sizeof(T); ++k) {
+				if (mask & (0x1 << k)) {
+					bufFilt[j++] = _mm_extract_epi32(mmEnc, k);
+				}
+			}
+		}
+		mmMask = _mm_cmpgt_epi32(mmDec, mmMax);
+		mask = movemask<T>(mmMask);
+		if (mask) {
+			std::cerr << i << ':' << mask << std::endl;
+			for(size_t k = 0; k < sizeof(uint_t); ++k) {
+				if (mask & (0x1 << k)) {
+					bitmap[(i + k) / BITSPERUNIT] |= 0x1 << (i + k) % BITSPERUNIT;
+				}
+			}
+		}
+	}
+	for(; i < N1; ++i) {
+		T val = static_cast<T>(bufEnc[i] * Ainv);
+		if (val < threshold) {
+			bufFilt[j++] = val;
+		}
+		if (val > std::numeric_limits<uint_t>::max()) {
+			bitmap[i / BITSPERUNIT] |= 0x1 << (i % BITSPERUNIT);
+		}
+	}
+	zsim_PIM_function_end();
+	return j;
 }
 #endif
 
@@ -130,25 +238,31 @@ int main(int argc, char *argv[]) {
 	std::cout << "Using A=" << A << " and A^-1=" << Ainv << ". A*A^-1=" << (resuint_t)(A * Ainv) << std::endl;
 	std::cout << "SIZE=" << SIZE << std::endl;
 
-	std::default_random_engine generator;
+	//std::default_random_engine generator;
+	std::mt19937 generator(1); // initial seed of "1", for the sake of reproducibility
 	std::uniform_int_distribution<uint_t> distribution;
 
-	auto bufferIn = new std::array<buf_t, SIZE>{};
-	auto bufferEnc = new std::array<buf_t, SIZE>{};
-	auto bufferOut = new std::array<buf_t, SIZE>{};
+	auto bufferIn = new std::array<uint_t, SIZE>{};
+	auto bufferEnc = new std::array<resuint_t, SIZE>{};
+	auto bufferFilt = new std::array<resuint_t, SIZE>{};
+	auto bufferDec = new std::array<uint_t, SIZE>{};
 	const size_t BITSPERUNIT = sizeof(size_t) * 8;
-	auto bitmap = new std::array<size_t, SIZE / BITSPERUNIT>{};
+	auto bitmapDec = new std::array<size_t, SIZE / BITSPERUNIT>{};
+	auto bitmapFilt = new std::array<size_t, SIZE / BITSPERUNIT>{};
 	std::cout << "filling array." << std::endl;
 	for(size_t i = 0; i < SIZE; ++i) {
 		bufferIn[0][i] = distribution(generator); // slow, but random ;-) -- yes we can use an xor-shuffle-generator instead...
 	}
+
 #ifdef __SSE4_2__
 #define encode encodeSSE42
 #define decodeChecked decodeCheckedSSE42
+#define filter1LT filter1LTScalar
 	std::cout << "SSE4.2" << std::endl;
 #else
 #define encode encodeScalar
 #define decodeChecked decodeCheckedScalar
+#define filter1LT filter1LTSSE42
 	std::cout << "Scalar" << std::endl;
 #endif
 	std::cout << "start." << std::endl;
@@ -157,23 +271,38 @@ int main(int argc, char *argv[]) {
 	if (num != bufferIn->size()) {
 		std::cerr << "[WARNING] After encode(): " << num << " != " << bufferIn->size() << std::endl;
 	}
-	num = decodeChecked<BITSPERUNIT>(*bufferEnc, *bufferOut, Ainv, *bitmap);
+	num = decodeChecked(*bufferEnc, *bufferDec, Ainv, *bitmapDec);
 	if (num != bufferEnc->size()) {
 		std::cerr << "[WARNING] After decodeChecked(): " << num << " != " << bufferEnc->size() << std::endl;
 	}
+	size_t numFilt = filter1LT(*bufferEnc, *bufferFilt, Ainv, *bitmapFilt, static_cast<resuint_t>(0x1234 * A));
 	zsim_roi_end();
+	std::cout << "Filter less-than: " << numFilt << " elements out of " << SIZE << " matched (" << ((static_cast<double>(numFilt) / SIZE) * 100) << "%)." << std::endl;
 	std::cout << "end.\nchecking." << std::endl;
+
 #undef encode
 #undef decodeChecked
+#undef filter1LT
 
 	for(size_t i = 0; i < SIZE; ++i) {
-		if (bufferIn[0][i] != bufferOut[0][i]) {
-			std::cerr << i << ": " << bufferIn[0][i] << " != " << bufferOut[0][i] << '\n';
+		resuint_t expected = static_cast<resuint_t>(bufferIn[0][i]) * static_cast<resuint_t>(A);
+		if (static_cast<resuint_t>(bufferEnc[0][i]) != expected) {
+			std::cerr << "Error in encode at " << i << ": " << std::hex << std::showbase << bufferEnc[0][i] << " != " << expected << " (" << bufferIn[0][i] << '*' << A << std::dec << std::noshowbase << ')' << '\n';
+		}
+	}
+	for(size_t i = 0; i < SIZE; ++i) {
+		if (static_cast<resuint_t>(bufferIn[0][i]) != bufferDec[0][i]) {
+			std::cerr << "Error in decode at " << i << ": " << bufferIn[0][i] << " != " << bufferDec[0][i] << '\n';
 		}
 	}
 	for (size_t i = 0; i < (SIZE / BITSPERUNIT); ++i) {
-		if (bitmap[0][i]) {
-			std::cerr << "error found at " << (i * BITSPERUNIT) << ": " << bitmap[0][i] << '\n';
+		if (bitmapDec[0][i]) {
+			std::cerr << "Error found in decodeChecked at " << (i * BITSPERUNIT) << ": " << std::hex << std::showbase << bitmapDec[0][i] << std::dec << std::noshowbase << '\n';
+		}
+	}
+	for (size_t i = 0; i < (numFilt / BITSPERUNIT); ++i) {
+		if (bitmapFilt[0][i]) {
+			std::cerr << "Error found in filter1LT at " << (i * BITSPERUNIT) << ": " << std::hex << std::showbase << bitmapFilt[0][i] << std::dec << std::noshowbase << '\n';
 		}
 	}
 }
