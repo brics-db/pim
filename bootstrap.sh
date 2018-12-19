@@ -14,10 +14,10 @@ if ((ret == 0)); then
 	tmp=$(cmake --version | head -1)
 	CMAKE_MAJOR=$(echo $tmp | sed -E 's/cmake version ([0-9]+)\.([0-9]+)\.([0-9]+)/\1/')
 	CMAKE_MINOR=$(echo $tmp | sed -E 's/cmake version ([0-9]+)\.([0-9]+)\.([0-9]+)/\2/')
-	if ((CMAKE_MAJOR < 3)); then echo "cmake version ($CMAKE_MAJOR) must be at least 3.11"; exit 1; fi
-	if ((CMAKE_MAJOR == 3)) && ((CMAKE_MINOR < 11)); then myexit 1 "cmake version ($CMAKE_MAJOR) must be at least 3.11"; fi
+	((CMAKE_MAJOR < 3)) && myexit 1 "cmake version ($CMAKE_MAJOR) must be at least 3.11"
+	((CMAKE_MAJOR == 3)) && ((CMAKE_MINOR < 11)) && myexit 2 "cmake version ($CMAKE_MAJOR) must be at least 3.11"
 else
-	myexit 2 "Could not find 'cmake'! On ubuntu, you can install it via 'sudo apt install python3-pip; sudo pip install cmake' to obtain the latest version."
+	myexit 3 "Could not find 'cmake'! On ubuntu, you can install it via 'sudo apt install python3-pip; sudo pip install cmake' to obtain the latest version."
 fi
 
 which scons &>/dev/null
@@ -52,18 +52,18 @@ checklib libconfig++.so libconfig libconfig++-dev
 
 if ((libhdf5 == 0)) || ((libxerces == 0)) || ((libelf == 0)) || ((libconfig == 0)); then
 	echo "Missing libraries${LIBS_TO_INSTALL}. Do you want to install them now? (you need sudo rights to continue)"
-	read -pn1 "[Y]es | [n]o" answer
+	read -n 1 -p "[Y]es | [n]o" answer
 	case "$answer" in
-		Y|y|\r|\n) sudo apt install ${LIBS_TO_INSTALL}; ;;
+		Y|y|\r|\n|"") sudo apt install ${LIBS_TO_INSTALL}; ;;
 		*) ;;
 	esac
 else
 	echo "Everything seems to be OK! :-) Trying to build..."
 fi
 
-mkdir -p build || exit 1 "Could not create directory 'build'"
-pushd build &>/dev/null || exit 2 "Could not cd into directory 'build'"
+mkdir -p build || myexit 4 "Could not create directory 'build'"
+pushd build &>/dev/null || myexit 5 "Could not cd into directory 'build'"
 rm -Rf *
-cmake .. -DCMAKE_BUILD_TYPE=Release || exit 3 "Problems in cmake script"
-make -j$(nproc) || exit 4 "Problems running make"
+cmake .. -DCMAKE_BUILD_TYPE=Release || myexit 6 "Problems in cmake script"
+make -j$(nproc) || myexit 7 "Problems running make"
 popd
