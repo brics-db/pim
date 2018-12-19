@@ -41,3 +41,6 @@ cmake_install.cmake
 
 # standard build directory
 /build
+
+# trace directories
+/traces_*
