@@ -91,6 +91,10 @@ fi
 mkdir -p build || myexit 4 "Could not create directory 'build'"
 pushd build &>/dev/null || myexit 5 "Could not cd into directory 'build'"
 rm -Rf *
-cmake .. -DCMAKE_BUILD_TYPE=Release || myexit 6 "Problems in cmake script"
+if [[ "$DEBUG" ]]; then
+	cmake .. -DCMAKE_BUILD_TYPE=Debug || myexit 6 "Problems in cmake script"
+else
+	cmake .. -DCMAKE_BUILD_TYPE=Release || myexit 6 "Problems in cmake script"
+fi
 make -j$(nproc) || myexit 7 "Problems running make"
 popd
